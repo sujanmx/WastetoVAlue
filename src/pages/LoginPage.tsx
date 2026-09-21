@@ -12,16 +12,16 @@ import { AppError } from '../services/api/apiError';
 export const LoginPage: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
-  const { login, loginWithGoogle, isAuthenticated } = useAuth();
+  const { login, loginWithGoogle, isAuthenticated, isPasswordRecovery } = useAuth();
 
-  // If already authenticated, redirect to destination or home
+  // If already authenticated, redirect to destination or home (unless currently in password recovery)
   const from = (location.state as { from?: { pathname: string } })?.from?.pathname || ROUTES.HOME;
 
   React.useEffect(() => {
-    if (isAuthenticated) {
+    if (isAuthenticated && !isPasswordRecovery) {
       navigate(from, { replace: true });
     }
-  }, [isAuthenticated, navigate, from]);
+  }, [isAuthenticated, isPasswordRecovery, navigate, from]);
 
   const [email, setEmail] = useState('alex.morgan@example.com');
   const [password, setPassword] = useState('password123');

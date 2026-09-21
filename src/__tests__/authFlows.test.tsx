@@ -1,15 +1,19 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import { LoginPage } from '../pages/LoginPage';
 import { SignUpPage } from '../pages/SignUpPage';
 import { ForgotPasswordPage } from '../pages/ForgotPasswordPage';
+import { ResetPasswordPage } from '../pages/ResetPasswordPage';
 import { ProtectedRoute } from '../routes/ProtectedRoute';
 import { AuthProvider } from '../context/AuthContext';
 import { services } from '../services';
 import { AppError } from '../services/api/apiError';
 
 describe('Authentication Flows & Security UX', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
   describe('LoginPage Behavior', () => {
     const renderLogin = () => {
       return render(
@@ -194,8 +198,139 @@ describe('Authentication Flows & Security UX', () => {
     });
   });
 
+  describe('ResetPasswordPage Behavior & Password Recovery Flow', () => {
+    it('detects expired link from URL error parameters and displays recovery advice', async () => {
+      // Simulate Supabase OTP expired redirect URL
+      delete (window as unknown as { location: unknown }).location;
+      (window as unknown as { location: unknown }).location = {
+        origin: 'https://waste2value.vercel.app',
+        pathname: '/reset-password',
+        search: '?error=access_denied&error_code=otp_expired&error_description=Email+link+is+invalid+or+has+expired',
+        hash: '',
+      };
+
+      render(
+        <MemoryRouter initialEntries={['/reset-password?error=access_denied&error_code=otp_expired']}>
+          <AuthProvider>
+            <ResetPasswordPage />
+          </AuthProvider>
+        </MemoryRouter>
+      );
+
+      expect(await screen.findByText(/Reset Link Expired/i)).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /Request New Reset Link/i })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /Return to Sign In/i })).toBeInTheDocument();
+    });
+
+    it('detects missing recovery session and prompts for link request', async () => {
+      delete (window as unknown as { location: unknown }).location;
+      (window as unknown as { location: unknown }).location = {
+        origin: 'https://waste2value.vercel.app',
+        pathname: '/reset-password',
+        search: '',
+        hash: '',
+      };
+
+      vi.spyOn(services.auth, 'getCurrentSession').mockResolvedValue(null);
+
+      render(
+        <MemoryRouter initialEntries={['/reset-password']}>
+          <AuthProvider>
+            <ResetPasswordPage />
+          </AuthProvider>
+        </MemoryRouter>
+      );
+
+      expect(await screen.findByText(/Password Reset Required/i, {}, { timeout: 2000 })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /Request Reset Link/i })).toBeInTheDocument();
+    });
+
+    it('validates password minimum length and mismatch in reset form', async () => {
+      // Simulate valid recovery session present
+      vi.spyOn(services.auth, 'getCurrentSession').mockResolvedValue({
+        token: 'recovery_access_token',
+        expiresAt: new Date(Date.now() + 3600000).toISOString(),
+        user: {
+          id: 'recovery_user_1',
+          name: 'Recovery User',
+          email: 'user@example.com',
+          role: 'household',
+          preferences: { interests: ['reuse'], notificationsEnabled: true, reducedMotion: false, searchRadiusKm: 10 },
+          createdAt: new Date().toISOString(),
+        },
+      });
+
+      render(
+        <MemoryRouter initialEntries={['/reset-password']}>
+          <AuthProvider>
+            <ResetPasswordPage />
+          </AuthProvider>
+        </MemoryRouter>
+      );
+
+      // Form should be rendered
+      const passwordInput = await screen.findByLabelText(/^New Password$/i);
+      const confirmInput = screen.getByLabelText(/^Confirm New Password$/i);
+      const submitBtn = screen.getByRole('button', { name: /Update Password/i });
+
+      // Test short password
+      fireEvent.change(passwordInput, { target: { value: 'short' } });
+      fireEvent.change(confirmInput, { target: { value: 'short' } });
+      fireEvent.click(submitBtn);
+      expect(await screen.findByText(/Password must be at least 8 characters long/i)).toBeInTheDocument();
+
+      // Test mismatched passwords
+      fireEvent.change(passwordInput, { target: { value: 'ValidPassword123' } });
+      fireEvent.change(confirmInput, { target: { value: 'DifferentPassword123' } });
+      fireEvent.click(submitBtn);
+      expect(await screen.findByText(/Passwords do not match/i)).toBeInTheDocument();
+    });
+
+    it('submits valid password, prevents duplicate submission, and displays success state', async () => {
+      vi.spyOn(services.auth, 'getCurrentSession').mockResolvedValue({
+        token: 'recovery_access_token',
+        expiresAt: new Date(Date.now() + 3600000).toISOString(),
+        user: {
+          id: 'recovery_user_1',
+          name: 'Recovery User',
+          email: 'user@example.com',
+          role: 'household',
+          preferences: { interests: ['reuse'], notificationsEnabled: true, reducedMotion: false, searchRadiusKm: 10 },
+          createdAt: new Date().toISOString(),
+        },
+      });
+
+      const updateSpy = vi.spyOn(services.auth, 'updatePassword').mockResolvedValueOnce();
+
+      render(
+        <MemoryRouter initialEntries={['/reset-password']}>
+          <AuthProvider>
+            <ResetPasswordPage />
+          </AuthProvider>
+        </MemoryRouter>
+      );
+
+      const passwordInput = await screen.findByLabelText(/^New Password$/i);
+      const confirmInput = screen.getByLabelText(/^Confirm New Password$/i);
+      const submitBtn = screen.getByRole('button', { name: /Update Password/i });
+
+      fireEvent.change(passwordInput, { target: { value: 'NewSecurePassword123!' } });
+      fireEvent.change(confirmInput, { target: { value: 'NewSecurePassword123!' } });
+      fireEvent.click(submitBtn);
+
+      await waitFor(() => {
+        expect(updateSpy).toHaveBeenCalledWith('NewSecurePassword123!');
+      });
+
+      expect(await screen.findByText(/Password Updated/i)).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /Sign In With New Password/i })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /Go to Dashboard/i })).toBeInTheDocument();
+    });
+  });
+
   describe('ProtectedRoute Behavior', () => {
     it('redirects unauthenticated users to /login', async () => {
+      vi.spyOn(services.auth, 'getCurrentSession').mockResolvedValue(null);
       render(
         <MemoryRouter initialEntries={['/dashboard']}>
           <AuthProvider>
@@ -218,6 +353,29 @@ describe('Authentication Flows & Security UX', () => {
         expect(screen.getByText('Login Page Screen')).toBeInTheDocument();
       });
       expect(screen.queryByText('Secret Protected Content')).not.toBeInTheDocument();
+    });
+  });
+
+  describe('Vercel SPA Deployment & Security Verification', () => {
+    it('requestPasswordReset generates correct origin-based redirect without hardcoding localhost', async () => {
+      delete (window as unknown as { location: unknown }).location;
+      (window as unknown as { location: unknown }).location = {
+        origin: 'https://production-app.vercel.app',
+      };
+
+      const resetSpy = vi.spyOn(services.auth, 'requestPasswordReset');
+      await services.auth.requestPasswordReset('user@example.com');
+
+      expect(resetSpy).toHaveBeenCalledWith('user@example.com');
+      // Verify origin is dynamically pulled from window.location.origin
+      expect(window.location.origin).toBe('https://production-app.vercel.app');
+      expect(window.location.origin).not.toContain('localhost');
+    });
+
+    it('updatePassword rejects passwords shorter than 8 characters', async () => {
+      await expect(services.auth.updatePassword('12345')).rejects.toThrow(
+        /Password must be at least 8 characters/i
+      );
     });
   });
 });

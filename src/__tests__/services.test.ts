@@ -17,6 +17,8 @@ describe('Service Container Contract Verification', () => {
     expect(typeof services.auth.logout).toBe('function');
     expect(typeof services.auth.getCurrentSession).toBe('function');
     expect(typeof services.auth.completeOnboarding).toBe('function');
+    expect(typeof services.auth.requestPasswordReset).toBe('function');
+    expect(typeof services.auth.updatePassword).toBe('function');
     expect(typeof services.auth.onAuthStateChange).toBe('function');
   });
 

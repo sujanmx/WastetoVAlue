@@ -8,5 +8,6 @@ export interface IAuthService {
   getCurrentSession(): Promise<AuthSession | null>;
   completeOnboarding(payload: OnboardingPayload): Promise<User>;
   requestPasswordReset(email: string): Promise<void>;
-  onAuthStateChange(callback: (session: AuthSession | null) => void): () => void;
+  updatePassword(newPassword: string): Promise<void>;
+  onAuthStateChange(callback: (session: AuthSession | null, event?: string) => void): () => void;
 }

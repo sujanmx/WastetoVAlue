@@ -125,7 +125,18 @@ export class MockAuthService implements IAuthService {
     // Silent success for security (do not disclose account existence)
   }
 
-  onAuthStateChange(_callback: (session: AuthSession | null) => void): () => void {
+  async updatePassword(newPassword: string): Promise<void> {
+    await delay(500);
+    if (!newPassword || newPassword.length < 8) {
+      throw AppError.validation('Password must be at least 8 characters.');
+    }
+    const session = safeStorage.getItem<AuthSession>(AUTH_STORAGE_KEY);
+    if (session) {
+      safeStorage.setItem(AUTH_STORAGE_KEY, { ...session });
+    }
+  }
+
+  onAuthStateChange(_callback: (session: AuthSession | null, event?: string) => void): () => void {
     // No-op for mock service
     return () => {};
   }

@@ -190,37 +190,57 @@ export class SupabaseAuthService implements IAuthService {
     const updatedProfile = await this.fetchProfile(authData.user.id);
     return mapProfileToUser(authData.user, updatedProfile);
   }
-async requestPasswordReset(email: string): Promise<void> {
-  const redirectTo =
-    typeof window !== 'undefined'
-      ? `${window.location.origin}/reset-password`
-      : undefined;
+  async requestPasswordReset(email: string): Promise<void> {
+    if (!email || !email.trim()) {
+      throw AppError.validation('Email address is required.');
+    }
 
-  const { error } = await supabase.auth.resetPasswordForEmail(email, {
-    redirectTo,
-  });
+    const redirectTo =
+      typeof window !== 'undefined'
+        ? `${window.location.origin}/reset-password`
+        : undefined;
 
-  if (error) {
-    // Do not leak existence of user account
-    console.warn('[SupabaseAuthService] Password reset notice:', error.message);
+    const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
+      redirectTo,
+    });
+
+    if (error) {
+      throw AppError.fromSupabase(error, 'Password reset request failed.');
+    }
   }
-}
- 
-  onAuthStateChange(callback: (session: AuthSession | null) => void): () => void {
+
+  async updatePassword(newPassword: string): Promise<void> {
+    if (!newPassword || newPassword.length < 8) {
+      throw AppError.validation('Password must be at least 8 characters.');
+    }
+
+    const { error } = await supabase.auth.updateUser({
+      password: newPassword,
+    });
+
+    if (error) {
+      throw AppError.fromSupabase(error, 'Failed to update password.');
+    }
+  }
+
+  onAuthStateChange(callback: (session: AuthSession | null, event?: string) => void): () => void {
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, sbSession) => {
       if (!sbSession || !sbSession.user || event === 'SIGNED_OUT') {
-        callback(null);
+        callback(null, event);
         return;
       }
 
-      if (['SIGNED_IN', 'TOKEN_REFRESHED', 'USER_UPDATED', 'INITIAL_SESSION'].includes(event)) {
+      if (['SIGNED_IN', 'TOKEN_REFRESHED', 'USER_UPDATED', 'INITIAL_SESSION', 'PASSWORD_RECOVERY'].includes(event)) {
         const profile = await this.fetchProfile(sbSession.user.id);
         const user = mapProfileToUser(sbSession.user, profile);
-        callback({
-          token: sbSession.access_token,
-          expiresAt: new Date(sbSession.expires_at! * 1000).toISOString(),
-          user,
-        });
+        callback(
+          {
+            token: sbSession.access_token,
+            expiresAt: new Date(sbSession.expires_at! * 1000).toISOString(),
+            user,
+          },
+          event
+        );
       }
     });
 

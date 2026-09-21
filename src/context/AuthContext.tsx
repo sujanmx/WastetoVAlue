@@ -12,11 +12,13 @@ interface AuthContextValue {
   session: AuthSession | null;
   status: 'loading' | 'authenticated' | 'unauthenticated';
   isAuthenticated: boolean;
+  isPasswordRecovery: boolean;
   login: (credentials: LoginCredentials) => Promise<void>;
   signUp: (payload: SignUpPayload) => Promise<SignUpResult>;
   loginWithGoogle: () => Promise<void>;
   logout: () => Promise<void>;
   completeOnboarding: (payload: OnboardingPayload) => Promise<void>;
+  updatePassword: (newPassword: string) => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -24,9 +26,15 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [session, setSession] = useState<AuthSession | null>(null);
   const [status, setStatus] = useState<'loading' | 'authenticated' | 'unauthenticated'>('loading');
+  const [isPasswordRecovery, setIsPasswordRecovery] = useState(false);
 
   useEffect(() => {
     let isMounted = true;
+
+    // Check URL hash/params for direct recovery indicator on mount
+    if (typeof window !== 'undefined' && window.location.hash.includes('type=recovery')) {
+      setIsPasswordRecovery(true);
+    }
 
     async function initAuth() {
       try {
@@ -51,9 +59,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     initAuth();
 
-    // Subscribe to live auth state events (token refresh, login, logout, user update)
-    const unsubscribe = services.auth.onAuthStateChange((newSession) => {
+    // Subscribe to live auth state events (token refresh, login, logout, user update, password recovery)
+    const unsubscribe = services.auth.onAuthStateChange((newSession, event) => {
       if (!isMounted) return;
+
+      if (event === 'PASSWORD_RECOVERY') {
+        setIsPasswordRecovery(true);
+      } else if (event === 'SIGNED_OUT') {
+        setIsPasswordRecovery(false);
+      }
+
       if (newSession) {
         setSession(newSession);
         setStatus('authenticated');
@@ -127,19 +142,42 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setSession((prev) => (prev ? { ...prev, user: updatedUser } : null));
   }, []);
 
+  const updatePassword = useCallback(async (newPassword: string) => {
+    setStatus('loading');
+    try {
+      await services.auth.updatePassword(newPassword);
+      setIsPasswordRecovery(false);
+      // Refresh current session after password update
+      const refreshedSession = await services.auth.getCurrentSession();
+      if (refreshedSession) {
+        setSession(refreshedSession);
+        setStatus('authenticated');
+      } else {
+        setStatus('unauthenticated');
+      }
+    } catch (err) {
+      // Keep authenticated status if session remains valid
+      const curSession = await services.auth.getCurrentSession();
+      setStatus(curSession ? 'authenticated' : 'unauthenticated');
+      throw err;
+    }
+  }, []);
+
   const value = useMemo<AuthContextValue>(
     () => ({
       user: session?.user || null,
       session,
       status,
       isAuthenticated: status === 'authenticated' && !!session,
+      isPasswordRecovery,
       login,
       signUp,
       loginWithGoogle,
       logout,
       completeOnboarding,
+      updatePassword,
     }),
-    [session, status, login, signUp, loginWithGoogle, logout, completeOnboarding]
+    [session, status, isPasswordRecovery, login, signUp, loginWithGoogle, logout, completeOnboarding, updatePassword]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

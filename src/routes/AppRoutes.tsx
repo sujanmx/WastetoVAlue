@@ -1,5 +1,5 @@
 import React, { Suspense, lazy } from 'react';
-import { Routes, Route } from 'react-router-dom';
+import { Routes, Route, useLocation, useNavigate } from 'react-router-dom';
 import { ROUTES } from '../config/constants';
 import { ProtectedRoute } from './ProtectedRoute';
 import { AppLayout } from '../components/layout/AppLayout';
@@ -17,6 +17,7 @@ const LandingPage = lazy(() => import('../pages/LandingPage').then((m) => ({ def
 const LoginPage = lazy(() => import('../pages/LoginPage').then((m) => ({ default: m.LoginPage })));
 const SignUpPage = lazy(() => import('../pages/SignUpPage').then((m) => ({ default: m.SignUpPage })));
 const ForgotPasswordPage = lazy(() => import('../pages/ForgotPasswordPage').then((m) => ({ default: m.ForgotPasswordPage })));
+const ResetPasswordPage = lazy(() => import('../pages/ResetPasswordPage').then((m) => ({ default: m.ResetPasswordPage })));
 const OnboardingPage = lazy(() => import('../pages/OnboardingPage').then((m) => ({ default: m.OnboardingPage })));
 const HomePage = lazy(() => import('../pages/HomePage').then((m) => ({ default: m.HomePage })));
 const ScanPage = lazy(() => import('../pages/ScanPage').then((m) => ({ default: m.ScanPage })));
@@ -38,6 +39,21 @@ const HelpPage = lazy(() => import('../pages/HelpPage').then((m) => ({ default: 
 const NotFoundPage = lazy(() => import('../pages/NotFoundPage').then((m) => ({ default: m.NotFoundPage })));
 
 export const AppRoutes: React.FC = () => {
+  const location = useLocation();
+  const navigate = useNavigate();
+
+  React.useEffect(() => {
+    // Defense-in-depth: if Supabase redirected to root or another page with a recovery token in the hash,
+    // automatically forward the browser to the dedicated reset password page while preserving the hash.
+    if (
+      typeof window !== 'undefined' &&
+      window.location.hash.includes('type=recovery') &&
+      location.pathname !== ROUTES.RESET_PASSWORD
+    ) {
+      navigate(`${ROUTES.RESET_PASSWORD}${window.location.hash}`, { replace: true });
+    }
+  }, [location, navigate]);
+
   return (
     <Suspense fallback={<RouteLoader />}>
       <Routes>
@@ -46,6 +62,7 @@ export const AppRoutes: React.FC = () => {
         <Route path={ROUTES.LOGIN} element={<LoginPage />} />
         <Route path={ROUTES.SIGNUP} element={<SignUpPage />} />
         <Route path={ROUTES.FORGOT_PASSWORD} element={<ForgotPasswordPage />} />
+        <Route path={ROUTES.RESET_PASSWORD} element={<ResetPasswordPage />} />
 
         {/* Onboarding */}
         <Route
