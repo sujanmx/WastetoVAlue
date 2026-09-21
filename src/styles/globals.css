@@ -1,0 +1,77 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --canvas: #F7F8F5;
+    --surface: #FFFFFF;
+    --primary-text: #122019;
+    --secondary-text: #66736B;
+    --brand-green: #176B45;
+    --deep-forest: #0B3324;
+    --soft-green: #E8F2EC;
+    --border: #DDE4DF;
+    --success: #247A4A;
+    --warning: #A66A00;
+    --error: #B42318;
+
+    /* AI Model Accents */
+    --ai-vision: #0D9488;
+    --ai-value: #D97706;
+    --ai-matching: #4F46E5;
+
+    /* Safe Area Variables for Mobile Viewports */
+    --sat: env(safe-area-inset-top, 0px);
+    --sab: env(safe-area-inset-bottom, 0px);
+    --sal: env(safe-area-inset-left, 0px);
+    --sar: env(safe-area-inset-right, 0px);
+  }
+
+  body {
+    background-color: var(--canvas);
+    color: var(--primary-text);
+    font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  /* Accessible focus indicators */
+  :focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 1px var(--brand-green), 0 0 0 3px rgba(23, 107, 69, 0.14);
+  }
+}
+
+@layer utilities {
+  /* Safe-area insets helpers */
+  .pt-safe {
+    padding-top: var(--sat);
+  }
+  .pb-safe {
+    padding-bottom: var(--sab);
+  }
+  .pl-safe {
+    padding-left: var(--sal);
+  }
+  .pr-safe {
+    padding-right: var(--sar);
+  }
+
+  /* Touch target utility */
+  .touch-target {
+    min-height: 48px;
+    min-width: 48px;
+  }
+}
+
+/* Reduced motion preference */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  ::before,
+  ::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
