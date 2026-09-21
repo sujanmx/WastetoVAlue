@@ -6,6 +6,8 @@ export interface GeminiConfig {
   timeoutMs: number;
 }
 
+export const VERIFIED_STABLE_MODEL = 'gemini-3.1-flash-lite';
+
 export function getGeminiConfig(): GeminiConfig {
   // Try Deno.env (Supabase runtime) or process.env (Node fallback for testing)
   const envGetter = typeof Deno !== 'undefined'
@@ -21,7 +23,7 @@ export function getGeminiConfig(): GeminiConfig {
     );
   }
 
-  const model = envGetter('GEMINI_VISION_MODEL') || 'gemini-2.5-flash';
+  const model = envGetter('GEMINI_VISION_MODEL') || VERIFIED_STABLE_MODEL;
 
   return {
     apiKey: apiKey.trim(),
@@ -142,15 +144,16 @@ const STRUCTURED_JSON_SCHEMA = {
 };
 
 /**
- * Executes a structured multimodal inference call to Google Gemini.
+ * Executes a structured multimodal inference call to Google Gemini for a specific model.
  */
-export async function callGeminiVision(
+async function executeModelInference(
+  model: string,
   cleanBase64: string,
   mimeType: string,
-  config = getGeminiConfig()
+  config: GeminiConfig
 ): Promise<{ rawJson: unknown; modelUsed: string; durationMs: number }> {
   const startTime = Date.now();
-  const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${config.model}:generateContent?key=${config.apiKey}`;
+  const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${config.apiKey}`;
 
   const requestBody = {
     contents: [
@@ -174,7 +177,10 @@ export async function callGeminiVision(
       temperature: 0.15,
       responseMimeType: 'application/json',
       responseSchema: STRUCTURED_JSON_SCHEMA,
-      maxOutputTokens: 2048,
+      maxOutputTokens: 4096,
+      thinkingConfig: {
+        thinkingLevel: 'LOW',
+      },
     },
   };
 
@@ -187,6 +193,7 @@ export async function callGeminiVision(
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        'x-goog-api-key': config.apiKey,
       },
       body: JSON.stringify(requestBody),
       signal: controller.signal,
@@ -194,7 +201,7 @@ export async function callGeminiVision(
   } catch (err: unknown) {
     clearTimeout(timeoutId);
     if (err instanceof Error && err.name === 'AbortError') {
-      throw new ValidationError('AI_TIMEOUT', 'Gemini AI request timed out after 25 seconds.', 504);
+      throw new ValidationError('AI_TIMEOUT', `Gemini AI request timed out after ${config.timeoutMs / 1000} seconds.`, 504);
     }
     throw new ValidationError(
       'AI_PROVIDER_UNAVAILABLE',
@@ -229,7 +236,7 @@ export async function callGeminiVision(
     if (status === 404) {
       throw new ValidationError(
         'AI_PROVIDER_UNAVAILABLE',
-        `Configured Gemini model (${config.model}) not found or unsupported.`,
+        `Configured Gemini model (${model}) not found or unsupported.`,
         503
       );
     }
@@ -261,7 +268,35 @@ export async function callGeminiVision(
 
   return {
     rawJson: parsed,
-    modelUsed: config.model,
+    modelUsed: model,
     durationMs,
   };
+}
+
+/**
+ * Executes a structured multimodal inference call to Google Gemini with automatic
+ * graceful fallback to VERIFIED_STABLE_MODEL if the primary model encounters
+ * temporary demand spikes (503), timeouts (504), or deprecation (404).
+ */
+export async function callGeminiVision(
+  cleanBase64: string,
+  mimeType: string,
+  config = getGeminiConfig()
+): Promise<{ rawJson: unknown; modelUsed: string; durationMs: number }> {
+  try {
+    return await executeModelInference(config.model, cleanBase64, mimeType, config);
+  } catch (err: unknown) {
+    const isRetryable =
+      err instanceof ValidationError &&
+      (err.status === 503 || err.status === 504 || err.code === 'AI_TIMEOUT');
+
+    if (config.model !== VERIFIED_STABLE_MODEL && isRetryable) {
+      console.warn(
+        `[GeminiClient] Primary model "${config.model}" failed (${(err as ValidationError).message}). Seamlessly falling back to verified stable model "${VERIFIED_STABLE_MODEL}"...`
+      );
+      return await executeModelInference(VERIFIED_STABLE_MODEL, cleanBase64, mimeType, config);
+    }
+
+    throw err;
+  }
 }

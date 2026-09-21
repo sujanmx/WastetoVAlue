@@ -31,7 +31,7 @@ export interface AppEnvConfig {
 
 export function validateEnv(rawEnv: Record<string, string | undefined>): AppEnvConfig {
   const appEnv = (rawEnv.VITE_APP_ENV as AppEnvConfig['appEnv']) || 'development';
-  const supabaseUrl = rawEnv.VITE_SUPABASE_URL?.trim() || '';
+  const supabaseUrl = rawEnv.VITE_SUPABASE_URL?.trim().replace(/\/+$/, '') || '';
   const supabasePublishableKey = rawEnv.VITE_SUPABASE_PUBLISHABLE_KEY?.trim() || '';
   const isSupabaseConfigured = Boolean(supabaseUrl && supabasePublishableKey);
 
