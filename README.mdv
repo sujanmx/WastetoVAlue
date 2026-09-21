@@ -1,0 +1,45 @@
+# Waste2Value
+
+> AI-powered platform that helps people identify, understand, and give unwanted items a second life through reuse, recycling, and circular-economy opportunities.
+
+## About
+
+Waste2Value is a smart waste-management and circular-economy platform designed to transform unwanted items into opportunities for reuse and recycling.
+
+Users can submit an item, analyze it using AI-powered image recognition, understand its material and potential value, and discover suitable circular-economy options.
+
+The platform combines AI, sustainability, and community-driven reuse into one modern web application.
+
+## Features
+
+- AI Item Analysis — Analyze uploaded item images using Google Gemini multimodal AI.
+- Circular-Economy Recommendations — Identify opportunities for reuse, recycling, or repurposing.
+- Image-Based Analysis — Upload an item image for automated assessment.
+- Authentication — Secure user signup, login, sessions, and password recovery.
+- Impact Tracking — Track environmental and circular-economy impact.
+- Receiver Network — Connect reusable items with potential receivers.
+- Secure Backend — Supabase authentication, PostgreSQL, Row Level Security, and Edge Functions.
+- Responsive UI — Designed for desktop, tablet, and mobile experiences.
+
+## AI Pipeline
+
+```text
+User
+  |
+  v
+Upload Item Image
+  |
+  v
+Waste2Value Frontend
+  |
+  v
+Supabase Edge Function
+  |
+  v
+Google Gemini
+  |
+  v
+Structured AI Assessment
+  |
+  v
+Waste2Value Recommendation
