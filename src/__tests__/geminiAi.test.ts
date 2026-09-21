@@ -286,6 +286,64 @@ describe('Gemini AI Multimodal System Test Suite', () => {
       expect(err.status).toBe(503);
     });
 
+    it('maps FunctionsFetchError to NETWORK_ERROR with friendly recovery advice', () => {
+      const fetchError = {
+        name: 'FunctionsFetchError',
+        message: 'Failed to send a request to the Edge Function',
+        context: new TypeError('Failed to fetch'),
+      };
+      const err = AppError.fromAiEdgeFunction(fetchError);
+      expect(err.code).toBe('NETWORK_ERROR');
+      expect(err.status).toBe(0);
+      expect(err.userMessage).toContain('Unable to connect to the AI analysis service');
+      expect(err.recoveryAdvice?.actionType).toBe('retry');
+      expect(err.recoveryAdvice?.actionLabel).toBe('Retry Analysis');
+    });
+
+    it('maps FunctionsRelayError to AI_PROVIDER_UNAVAILABLE with status 503', () => {
+      const relayError = {
+        name: 'FunctionsRelayError',
+        message: 'Relay error communicating with function',
+      };
+      const err = AppError.fromAiEdgeFunction(relayError);
+      expect(err.code).toBe('AI_PROVIDER_UNAVAILABLE');
+      expect(err.status).toBe(503);
+      expect(err.userMessage).toContain('temporarily unavailable');
+    });
+
+    it('maps HTTP 504 status context to AI_TIMEOUT', () => {
+      const timeoutError = {
+        name: 'FunctionsHttpError',
+        message: 'Edge Function returned a non-2xx status code',
+        context: { status: 504 },
+      };
+      const err = AppError.fromAiEdgeFunction(timeoutError);
+      expect(err.code).toBe('AI_TIMEOUT');
+      expect(err.status).toBe(504);
+      expect(err.userMessage).toContain('timed out');
+    });
+
+    it('maps HTTP 401 status context to AI_AUTH_REQUIRED', () => {
+      const authError = {
+        name: 'FunctionsHttpError',
+        message: 'Edge Function returned a non-2xx status code',
+        context: { status: 401 },
+      };
+      const err = AppError.fromAiEdgeFunction(authError);
+      expect(err.code).toBe('AI_AUTH_REQUIRED');
+      expect(err.status).toBe(401);
+      expect(err.recoveryAdvice?.suggestedRoute).toBe('/login');
+    });
+
+    it('sanitizes error output so tokens, keys, or credentials are never exposed in userMessage', () => {
+      const leakedString = 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.sensitive-token';
+      const err = AppError.fromAiEdgeFunction({
+        message: `Network error containing ${leakedString}`,
+      });
+      expect(err.userMessage).not.toContain(leakedString);
+      expect(err.userMessage).toBe('AI analysis could not be completed. Please try again.');
+    });
+
     it('handles unknown arbitrary error safely without crashing', () => {
       const err = AppError.fromAiEdgeFunction(new Error('Network disconnected'));
       expect(err.code).toBe('AI_UNKNOWN_ERROR');
@@ -440,6 +498,185 @@ describe('Gemini AI Multimodal System Test Suite', () => {
         expect(e).toBeInstanceOf(AppError);
         expect((e as AppError).code).toBe('AI_RATE_LIMITED');
       }
+    });
+
+    it('proactively refreshes expired session token before invoking Edge Function (idle recovery)', async () => {
+      const expiredSession = {
+        access_token: 'expired-jwt-token',
+        expires_at: Math.floor(Date.now() / 1000) - 300, // expired 5 mins ago
+      };
+      const refreshedSession = {
+        access_token: 'fresh-refreshed-jwt-token',
+        expires_at: Math.floor(Date.now() / 1000) + 3600, // fresh for 1 hr
+      };
+
+      vi.spyOn(supabase.auth, 'getSession').mockResolvedValue({
+        data: { session: expiredSession },
+        error: null,
+      } as never);
+
+      const mockRefresh = vi.spyOn(supabase.auth, 'refreshSession').mockResolvedValue({
+        data: { session: refreshedSession, user: { id: 'test-user-id' } },
+        error: null,
+      } as never);
+
+      const mockInvoke = vi.fn().mockResolvedValue({
+        data: {
+          vision: {
+            detectedObject: 'Wool Sweater',
+            category: 'Clothing',
+            material: 'Wool',
+            condition: 'Usable',
+            confidence: 'High',
+            confidenceScore: 0.9,
+            tags: ['clothing'],
+          },
+        },
+        error: null,
+      });
+      vi.spyOn(supabase, 'functions', 'get').mockReturnValue({
+        invoke: mockInvoke,
+      } as never);
+
+      const fakeDataUri = 'data:image/jpeg;base64,/9j/4AAQSkZJRgABAQEASABIAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////wgALCAABAAEBAREA/8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABPxA=';
+
+      await aiService.identifyItem(fakeDataUri);
+
+      expect(mockRefresh).toHaveBeenCalledTimes(1);
+      expect(mockInvoke).toHaveBeenCalledWith(
+        'analyze-item',
+        expect.objectContaining({
+          headers: expect.objectContaining({
+            Authorization: 'Bearer fresh-refreshed-jwt-token',
+          }),
+        })
+      );
+    });
+
+    it('recovers from transient FunctionsFetchError with a single automatic retry and refreshed session', async () => {
+      const mockSession = {
+        access_token: 'active-jwt-token',
+        expires_at: Math.floor(Date.now() / 1000) + 3600,
+      };
+      vi.spyOn(supabase.auth, 'getSession').mockResolvedValue({
+        data: { session: mockSession },
+        error: null,
+      } as never);
+
+      const mockRefresh = vi.spyOn(supabase.auth, 'refreshSession').mockResolvedValue({
+        data: { session: { access_token: 'new-jwt-after-retry', expires_at: Math.floor(Date.now() / 1000) + 3600 } },
+        error: null,
+      } as never);
+
+      // First call fails with FunctionsFetchError (idle disconnect), second call succeeds
+      const mockInvoke = vi
+        .fn()
+        .mockResolvedValueOnce({
+          data: null,
+          error: {
+            name: 'FunctionsFetchError',
+            message: 'Failed to send a request to the Edge Function',
+            context: new TypeError('Failed to fetch'),
+          },
+        })
+        .mockResolvedValueOnce({
+          data: {
+            vision: {
+              detectedObject: 'Cardboard Box',
+              category: 'Paper',
+              material: 'Corrugated Cardboard',
+              condition: 'Recyclable',
+              confidence: 'High',
+              confidenceScore: 0.92,
+              tags: ['paper', 'box'],
+            },
+          },
+          error: null,
+        });
+
+      vi.spyOn(supabase, 'functions', 'get').mockReturnValue({
+        invoke: mockInvoke,
+      } as never);
+
+      const fakeDataUri = 'data:image/jpeg;base64,/9j/4AAQSkZJRgABAQEASABIAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////wgALCAABAAEBAREA/8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABPxA=';
+
+      const result = await aiService.identifyItem(fakeDataUri);
+
+      // Verify retry occurred exactly once (2 invokes total)
+      expect(mockInvoke).toHaveBeenCalledTimes(2);
+      expect(mockRefresh).toHaveBeenCalledTimes(1);
+      expect(result.detectedObject).toBe('Cardboard Box');
+    });
+
+    it('aborts after max 1 retry on recurring FunctionsFetchError without infinite loop', async () => {
+      vi.spyOn(supabase.auth, 'getSession').mockResolvedValue({
+        data: { session: { access_token: 'valid-jwt', expires_at: Math.floor(Date.now() / 1000) + 3600 } },
+        error: null,
+      } as never);
+
+      // Both attempts fail with FunctionsFetchError
+      const mockInvoke = vi.fn().mockResolvedValue({
+        data: null,
+        error: {
+          name: 'FunctionsFetchError',
+          message: 'Failed to send a request to the Edge Function',
+          context: new TypeError('Failed to fetch'),
+        },
+      });
+
+      vi.spyOn(supabase, 'functions', 'get').mockReturnValue({
+        invoke: mockInvoke,
+      } as never);
+
+      const fakeDataUri = 'data:image/jpeg;base64,/9j/4AAQSkZJRgABAQEASABIAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////wgALCAABAAEBAREA/8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABPxA=';
+
+      await expect(aiService.identifyItem(fakeDataUri)).rejects.toThrow();
+
+      // STRICT CHECK: exactly 2 attempts (initial + 1 retry), never an infinite loop
+      expect(mockInvoke).toHaveBeenCalledTimes(2);
+
+      try {
+        await aiService.identifyItem(fakeDataUri);
+      } catch (e) {
+        expect(e).toBeInstanceOf(AppError);
+        expect((e as AppError).code).toBe('NETWORK_ERROR');
+        expect((e as AppError).userMessage).toContain('Unable to connect to the AI analysis service');
+      }
+    });
+
+    it('does not retry non-transient errors (e.g. AI_IMAGE_TOO_LARGE)', async () => {
+      vi.spyOn(supabase.auth, 'getSession').mockResolvedValue({
+        data: { session: { access_token: 'valid-jwt', expires_at: Math.floor(Date.now() / 1000) + 3600 } },
+        error: null,
+      } as never);
+
+      const mockInvoke = vi.fn().mockResolvedValue({
+        data: null,
+        error: {
+          name: 'FunctionsHttpError',
+          message: 'Edge Function returned a non-2xx status code',
+          context: {
+            status: 413,
+            json: async () => ({
+              error: {
+                code: 'AI_IMAGE_TOO_LARGE',
+                message: 'Image exceeds 10MB limit',
+              },
+            }),
+          },
+        },
+      });
+
+      vi.spyOn(supabase, 'functions', 'get').mockReturnValue({
+        invoke: mockInvoke,
+      } as never);
+
+      const fakeDataUri = 'data:image/jpeg;base64,/9j/4AAQSkZJRgABAQEASABIAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////wgALCAABAAEBAREA/8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABPxA=';
+
+      await expect(aiService.identifyItem(fakeDataUri)).rejects.toThrow();
+
+      // Crucial: non-transient error must NOT be retried (invoked only 1 time)
+      expect(mockInvoke).toHaveBeenCalledTimes(1);
     });
   });
 

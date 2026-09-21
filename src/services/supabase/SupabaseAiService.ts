@@ -59,6 +59,126 @@ export class SupabaseAiService implements IAiService {
     }
   }
 
+  /**
+   * Retrieves a valid session access token. Proactively refreshes the token if expired
+   * or close to expiry (e.g. after tab idle time), ensuring the Edge Function receives a fresh JWT.
+   */
+  private async getValidAccessToken(): Promise<string | undefined> {
+    try {
+      const { data: sessionData } = await supabase.auth.getSession();
+      let session = sessionData?.session;
+
+      const isExpiredOrClose =
+        session?.expires_at ? session.expires_at * 1000 < Date.now() + 60000 : false;
+
+      if (!session || isExpiredOrClose) {
+        const { data: refreshData } = await supabase.auth.refreshSession();
+        if (refreshData?.session) {
+          session = refreshData.session;
+        }
+      }
+
+      if (session?.access_token) {
+        return session.access_token;
+      }
+    } catch {
+      // Fall through to verify user via getUser
+    }
+
+    // Fallback authentication check
+    const { data: authData } = await supabase.auth.getUser();
+    if (!authData?.user) {
+      throw AppError.aiAuthRequired();
+    }
+
+    return undefined;
+  }
+
+  /**
+   * Identifies whether an Edge Function error is transient (e.g. network disconnect,
+   * idle socket reset, relay timeout, gateway cold-start) and eligible for a single retry.
+   */
+  private isTransientError(error: unknown): boolean {
+    if (!error || typeof error !== 'object') return false;
+    const err = error as {
+      name?: string;
+      message?: string;
+      context?: { status?: number };
+    };
+
+    const name = err.name || '';
+    const message = (err.message || '').toLowerCase();
+    const status = err.context?.status;
+
+    // FunctionsFetchError: failed fetch, CORS preflight dropped, or idle TCP reset
+    if (
+      name === 'FunctionsFetchError' ||
+      message.includes('failed to send a request') ||
+      message.includes('failed to fetch') ||
+      message.includes('networkerror')
+    ) {
+      return true;
+    }
+
+    // FunctionsRelayError: relay communication failed
+    if (name === 'FunctionsRelayError' || message.includes('relay')) {
+      return true;
+    }
+
+    // Gateway / provider timeout or transient unavailability
+    if (status === 502 || status === 503 || status === 504 || status === 401) {
+      return true;
+    }
+
+    return false;
+  }
+
+  /**
+   * Parses error context returned by Supabase FunctionsClient.
+   */
+  private async parseFunctionError(error: unknown): Promise<unknown> {
+    if (!error || typeof error !== 'object') return error;
+
+    const errorObj = error as unknown as FunctionErrorContext & {
+      context?: { status?: number; json?: () => Promise<unknown> };
+    };
+
+    if (typeof errorObj.context?.json === 'function') {
+      try {
+        const body = (await errorObj.context.json()) as { error?: unknown };
+        if (body?.error) {
+          return body.error;
+        }
+        if (body) {
+          return body;
+        }
+      } catch {
+        // Fall through if json body parsing fails
+      }
+    }
+
+    return error;
+  }
+
+  private async invokeAnalyzeItem(
+    imageBase64: string,
+    mimeType: string,
+    accessToken?: string
+  ) {
+    const headers: Record<string, string> = {};
+    if (accessToken) {
+      headers['Authorization'] = `Bearer ${accessToken}`;
+    }
+
+    return supabase.functions.invoke('analyze-item', {
+      headers: Object.keys(headers).length > 0 ? headers : undefined,
+      body: {
+        imageBase64,
+        mimeType,
+      },
+    });
+  }
+
   async identifyItem(
     imageFileOrUrl: File | string,
     onProgress?: (progress: PipelineProgress) => void
@@ -70,11 +190,8 @@ export class SupabaseAiService implements IAiService {
       label: 'Detecting object and geometry...',
     });
 
-    // Ensure user is authenticated before initiating server inference
-    const { data: authData } = await supabase.auth.getUser();
-    if (!authData?.user) {
-      throw AppError.aiAuthRequired();
-    }
+    // 1. Ensure user is authenticated and proactively refresh token after idle
+    let accessToken = await this.getValidAccessToken();
 
     const { imageBase64, mimeType } = await this.prepareImagePayload(imageFileOrUrl);
 
@@ -92,28 +209,34 @@ export class SupabaseAiService implements IAiService {
       label: 'Assessing structural condition...',
     });
 
-    // Invoke authenticated Supabase Edge Function 'analyze-item'
-    const { data, error } = await supabase.functions.invoke('analyze-item', {
-      body: {
-        imageBase64,
-        mimeType,
-      },
-    });
+    // 2. Invoke authenticated Supabase Edge Function 'analyze-item'
+    let invokeResult = await this.invokeAnalyzeItem(imageBase64, mimeType, accessToken);
 
-    if (error) {
-      let parsedError: unknown = error;
+    // 3. Transient failure recovery: maximum 1 automatic retry for transient network/socket/token errors
+    if (invokeResult.error && this.isTransientError(invokeResult.error)) {
       try {
-        const errorObj = error as unknown as FunctionErrorContext;
-        if (errorObj.context?.json) {
-          const body = await errorObj.context.json();
-          parsedError = body?.error || body;
+        // Proactively refresh session token in case it expired while idle
+        const { data: refreshData } = await supabase.auth.refreshSession();
+        if (refreshData?.session?.access_token) {
+          accessToken = refreshData.session.access_token;
         }
       } catch {
-        // Ignored
+        // Refresh error is non-fatal for retry attempt
       }
+
+      // Brief backoff (800ms) to allow socket/gateway reconnection
+      await new Promise((resolve) => setTimeout(resolve, 800));
+
+      // Attempt single retry (strictly 1 retry, no infinite loop)
+      invokeResult = await this.invokeAnalyzeItem(imageBase64, mimeType, accessToken);
+    }
+
+    if (invokeResult.error) {
+      const parsedError = await this.parseFunctionError(invokeResult.error);
       throw AppError.fromAiEdgeFunction(parsedError);
     }
 
+    const data = invokeResult.data;
     if (!data?.vision) {
       throw AppError.aiIdentificationFailed();
     }

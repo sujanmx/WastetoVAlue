@@ -10,6 +10,8 @@ import { ActionableError } from '../components/feedback/ActionableError';
 import { CheckCircle2, Circle, Loader2 } from 'lucide-react';
 import { cn } from '../lib/utils';
 
+import { AppError } from '../services/api/apiError';
+
 export const ScanAnalyzePage: React.FC = () => {
   const navigate = useNavigate();
   const { imageData, setVisionResult, setValueAiResult } = useScanFlow();
@@ -20,7 +22,19 @@ export const ScanAnalyzePage: React.FC = () => {
     totalStages: 5,
     label: 'Detecting object and geometry...',
   });
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<AppError | Error | null>(null);
+  const [retryTrigger, setRetryTrigger] = useState<number>(0);
+
+  const handleRetry = () => {
+    setError(null);
+    setCurrentProgress({
+      stage: 'detecting_object',
+      stageIndex: 1,
+      totalStages: 5,
+      label: 'Detecting object and geometry...',
+    });
+    setRetryTrigger((prev) => prev + 1);
+  };
 
   useEffect(() => {
     let isMounted = true;
@@ -49,7 +63,9 @@ export const ScanAnalyzePage: React.FC = () => {
         navigate(ROUTES.SCAN_RESULT);
       } catch (err: unknown) {
         if (isMounted) {
-          setError(err instanceof Error ? err.message : 'AI analysis was interrupted.');
+          setError(
+            err instanceof Error ? err : new Error(String(err || 'AI analysis was interrupted.'))
+          );
         }
       }
     }
@@ -59,7 +75,22 @@ export const ScanAnalyzePage: React.FC = () => {
     return () => {
       isMounted = false;
     };
-  }, [imageData, navigate, setVisionResult, setValueAiResult]);
+  }, [imageData, navigate, setVisionResult, setValueAiResult, retryTrigger]);
+
+  const appError = error instanceof AppError ? error : null;
+  const isAuthError =
+    appError?.code === 'AI_AUTH_REQUIRED' || appError?.code === 'AUTHENTICATION_ERROR';
+  const errorMessage =
+    appError?.userMessage || error?.message || 'AI analysis could not be completed. Please try again.';
+  const errorTitle = isAuthError
+    ? 'Sign In Required'
+    : appError?.code === 'NETWORK_ERROR'
+    ? 'Connection Interrupted'
+    : 'Analysis Interrupted';
+  const recoveryLabel = isAuthError
+    ? 'Sign In'
+    : appError?.recoveryAdvice?.actionLabel || 'Retry Analysis';
+  const onRetryAction = isAuthError ? () => navigate(ROUTES.LOGIN) : handleRetry;
 
   return (
     <WorkspaceContainer maxWidth="md">
@@ -71,9 +102,10 @@ export const ScanAnalyzePage: React.FC = () => {
 
         {error ? (
           <ActionableError
-            message={error}
-            onRetry={() => window.location.reload()}
-            recoveryLabel="Retry Analysis"
+            title={errorTitle}
+            message={errorMessage}
+            onRetry={onRetryAction}
+            recoveryLabel={recoveryLabel}
           />
         ) : (
           <Card variant="raised" className="p-6 text-left">

@@ -154,11 +154,59 @@ export class AppError extends Error {
       const errObj = error as {
         code?: string;
         message?: string;
+        name?: string;
+        status?: number;
         context?: { status?: number };
       };
 
+      const name = errObj.name || '';
       const code = errObj.code || '';
       const message = errObj.message || '';
+      const httpStatus = errObj.status || errObj.context?.status;
+
+      // Handle Supabase FunctionsFetchError (network, CORS preflight, or dead idle connection)
+      if (
+        name === 'FunctionsFetchError' ||
+        message.includes('Failed to send a request to the Edge Function') ||
+        message.toLowerCase().includes('failed to fetch') ||
+        message.toLowerCase().includes('networkerror')
+      ) {
+        return new AppError({
+          message: 'Connection to Edge Function failed (FunctionsFetchError)',
+          code: 'NETWORK_ERROR',
+          status: 0,
+          userMessage: 'Unable to connect to the AI analysis service. Please check your connection and retry.',
+          recoveryAdvice: { actionLabel: 'Retry Analysis', actionType: 'retry' },
+        });
+      }
+
+      // Handle Supabase FunctionsRelayError (relay gateway unavailable)
+      if (name === 'FunctionsRelayError' || message.toLowerCase().includes('relay')) {
+        return new AppError({
+          message: 'Edge Function relay gateway unavailable (FunctionsRelayError)',
+          code: 'AI_PROVIDER_UNAVAILABLE',
+          status: 503,
+          userMessage: 'The AI service gateway is temporarily unavailable. Please try again shortly.',
+          recoveryAdvice: { actionLabel: 'Retry Analysis', actionType: 'retry' },
+        });
+      }
+
+      // Status code mappings from Edge Function responses
+      if (httpStatus === 401 || code === 'AI_AUTH_REQUIRED') {
+        return AppError.aiAuthRequired();
+      }
+      if (httpStatus === 403 || code === 'AI_FORBIDDEN') {
+        return AppError.forbidden('You do not have permission to analyze this item.');
+      }
+      if (httpStatus === 429 || code === 'AI_RATE_LIMITED') {
+        return AppError.aiRateLimited();
+      }
+      if (httpStatus === 504 || code === 'AI_TIMEOUT') {
+        return AppError.aiTimeout();
+      }
+      if (httpStatus === 503 || code === 'AI_PROVIDER_UNAVAILABLE') {
+        return AppError.aiProviderUnavailable(message);
+      }
 
       switch (code) {
         case 'AI_AUTH_REQUIRED':
@@ -214,8 +262,9 @@ export class AppError extends Error {
       }
     }
 
+    const fallbackMsg = typeof error === 'string' ? error : (error as { message?: string })?.message || 'AI analysis failed';
     return new AppError({
-      message: String(error || 'AI analysis failed'),
+      message: fallbackMsg,
       code: 'AI_UNKNOWN_ERROR',
       userMessage: 'AI analysis could not be completed. Please try again.',
       recoveryAdvice: { actionLabel: 'Retry', actionType: 'retry' },
