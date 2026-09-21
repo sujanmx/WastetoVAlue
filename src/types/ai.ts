@@ -42,6 +42,7 @@ export type PipelineStage =
   | 'identifying_material'
   | 'assessing_condition'
   | 'evaluating_value_paths'
+  | 'preparing_recommendation'
   | 'matching_receivers'
   | 'completed';
 

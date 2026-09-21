@@ -12,6 +12,16 @@ export type AppErrorCode =
   | 'NETWORK_ERROR'
   | 'DATABASE_ERROR'
   | 'AI_IDENTIFY_FAILED'
+  | 'AI_AUTH_REQUIRED'
+  | 'AI_INVALID_IMAGE'
+  | 'AI_UNSUPPORTED_IMAGE'
+  | 'AI_IMAGE_TOO_LARGE'
+  | 'AI_RATE_LIMITED'
+  | 'AI_PROVIDER_UNAVAILABLE'
+  | 'AI_TIMEOUT'
+  | 'AI_INVALID_OUTPUT'
+  | 'AI_CONTENT_REJECTED'
+  | 'AI_UNKNOWN_ERROR'
   | 'NO_RECEIVERS_FOUND'
   | 'UNKNOWN_ERROR';
 
@@ -94,6 +104,121 @@ export class AppError extends Error {
       code: 'AI_IDENTIFY_FAILED',
       userMessage: "We couldn't confidently understand this image. Try another photo with better lighting or enter details manually.",
       recoveryAdvice: { actionLabel: 'Try Another Image', actionType: 're-upload' },
+    });
+  }
+
+  static aiAuthRequired(): AppError {
+    return new AppError({
+      message: 'Sign in required for AI analysis',
+      code: 'AI_AUTH_REQUIRED',
+      status: 401,
+      userMessage: 'Please sign in to analyze your items with Gemini Vision AI.',
+      recoveryAdvice: { actionLabel: 'Sign in', actionType: 're-authenticate', suggestedRoute: '/login' },
+    });
+  }
+
+  static aiRateLimited(): AppError {
+    return new AppError({
+      message: 'AI analysis quota exceeded',
+      code: 'AI_RATE_LIMITED',
+      status: 429,
+      userMessage: 'AI analysis is currently experiencing high demand. Please wait a few moments and try again.',
+      recoveryAdvice: { actionLabel: 'Retry', actionType: 'retry' },
+    });
+  }
+
+  static aiTimeout(): AppError {
+    return new AppError({
+      message: 'AI Vision analysis timed out',
+      code: 'AI_TIMEOUT',
+      status: 504,
+      userMessage: 'The AI analysis request timed out. Please check your connection and retry.',
+      recoveryAdvice: { actionLabel: 'Retry', actionType: 'retry' },
+    });
+  }
+
+  static aiProviderUnavailable(details?: string): AppError {
+    return new AppError({
+      message: details || 'Gemini AI service unavailable',
+      code: 'AI_PROVIDER_UNAVAILABLE',
+      status: 503,
+      userMessage: 'The AI service is temporarily unavailable. Please try again in a few moments.',
+      recoveryAdvice: { actionLabel: 'Retry', actionType: 'retry' },
+    });
+  }
+
+  static fromAiEdgeFunction(error: unknown): AppError {
+    if (error instanceof AppError) return error;
+
+    if (error && typeof error === 'object') {
+      const errObj = error as {
+        code?: string;
+        message?: string;
+        context?: { status?: number };
+      };
+
+      const code = errObj.code || '';
+      const message = errObj.message || '';
+
+      switch (code) {
+        case 'AI_AUTH_REQUIRED':
+          return AppError.aiAuthRequired();
+        case 'AI_FORBIDDEN':
+          return AppError.forbidden('You do not have permission to analyze this item.');
+        case 'AI_IMAGE_TOO_LARGE':
+          return new AppError({
+            message: 'Image exceeds 10MB limit',
+            code: 'AI_IMAGE_TOO_LARGE',
+            status: 413,
+            userMessage: 'Image file is too large. Please select a photo under 10MB.',
+            recoveryAdvice: { actionLabel: 'Select Another Photo', actionType: 're-upload' },
+          });
+        case 'AI_UNSUPPORTED_IMAGE':
+          return new AppError({
+            message: message || 'Unsupported image format',
+            code: 'AI_UNSUPPORTED_IMAGE',
+            status: 415,
+            userMessage: 'Unsupported image format. Please use JPEG, PNG, or WebP.',
+            recoveryAdvice: { actionLabel: 'Select Another Photo', actionType: 're-upload' },
+          });
+        case 'AI_RATE_LIMITED':
+          return AppError.aiRateLimited();
+        case 'AI_TIMEOUT':
+          return AppError.aiTimeout();
+        case 'AI_CONTENT_REJECTED':
+          return new AppError({
+            message: 'Image flagged by safety filter',
+            code: 'AI_CONTENT_REJECTED',
+            status: 422,
+            userMessage: 'This image could not be processed by safety guidelines. Please upload a clear photo of your item.',
+            recoveryAdvice: { actionLabel: 'Try Another Image', actionType: 're-upload' },
+          });
+        case 'AI_INVALID_IMAGE':
+          return new AppError({
+            message: message || 'Image payload is missing or invalid',
+            code: 'AI_INVALID_IMAGE',
+            status: 400,
+            userMessage: 'The provided image is invalid or empty. Please select a valid photo.',
+            recoveryAdvice: { actionLabel: 'Select Another Photo', actionType: 're-upload' },
+          });
+        case 'AI_INVALID_OUTPUT':
+          return new AppError({
+            message: message || 'Gemini output structure mismatch',
+            code: 'AI_INVALID_OUTPUT',
+            status: 502,
+            userMessage: 'The AI service returned an unexpected response. Please try again.',
+            recoveryAdvice: { actionLabel: 'Retry', actionType: 'retry' },
+          });
+        case 'AI_PROVIDER_UNAVAILABLE':
+          return AppError.aiProviderUnavailable(message);
+      }
+    }
+
+    return new AppError({
+      message: String(error || 'AI analysis failed'),
+      code: 'AI_UNKNOWN_ERROR',
+      userMessage: 'AI analysis could not be completed. Please try again.',
+      recoveryAdvice: { actionLabel: 'Retry', actionType: 'retry' },
     });
   }
 

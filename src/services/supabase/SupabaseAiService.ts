@@ -1,94 +1,173 @@
 import { IAiService } from '../interfaces/IAiService';
 import { supabase } from '../../lib/supabase/client';
 import { VisionAnalysisResult, ValueAiResult, PipelineProgress } from '../../types/ai';
+import { CircularValuePath } from '../../types/item';
 import { AppError } from '../api/apiError';
 
-const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+interface FunctionErrorContext {
+  context?: {
+    json?: () => Promise<{ error?: { code?: string; message?: string } }>;
+  };
+}
 
 export class SupabaseAiService implements IAiService {
-  async identifyItem(
-    _imageFileOrUrl: File | string,
-    onProgress?: (progress: PipelineProgress) => void
-  ): Promise<VisionAnalysisResult> {
-    if (onProgress) {
-      onProgress({
-        stage: 'detecting_object',
-        stageIndex: 1,
-        totalStages: 3,
-        label: 'Detecting object and geometry...',
-      });
-      await delay(450);
-      onProgress({
-        stage: 'identifying_material',
-        stageIndex: 2,
-        totalStages: 3,
-        label: 'Identifying material and composition...',
-      });
-      await delay(450);
-      onProgress({
-        stage: 'assessing_condition',
-        stageIndex: 3,
-        totalStages: 3,
-        label: 'Assessing structural condition...',
-      });
-      await delay(400);
-    }
+  private lastValueResult: ValueAiResult | null = null;
+  private lastVisionResult: VisionAnalysisResult | null = null;
 
-    try {
-      // If deployed edge function exists, invoke it:
-      // const { data, error } = await supabase.functions.invoke('vision-identify', { body: ... });
-      // Otherwise provide robust, design-compliant identification response:
-      const result: VisionAnalysisResult = {
-        detectedObject: 'Wooden Dining Chair',
-        category: 'Furniture',
-        material: 'Solid Oak Wood',
-        condition: 'Usable',
-        confidence: 'High',
-        confidenceScore: 0.94,
-        tags: ['furniture', 'timber', 'seating', 'solid-wood'],
-      };
-
-      // If user is authenticated, log assessment into ai_assessments table
-      const { data: authData } = await supabase.auth.getUser();
-      if (authData?.user) {
-        await supabase.from('ai_assessments').insert({
-          user_id: authData.user.id,
-          detected_object: result.detectedObject,
-          category: result.category,
-          material: result.material,
-          condition: result.condition,
-          confidence: result.confidence,
-          confidence_score: result.confidenceScore,
-          tags: result.tags,
-          paths_evaluation: {},
-        }).then(({ error }) => {
-          if (error) console.warn('[SupabaseAiService] Could not persist assessment audit:', error.message);
-        });
+  private async prepareImagePayload(imageFileOrUrl: File | string): Promise<{
+    imageBase64: string;
+    mimeType: string;
+  }> {
+    if (typeof imageFileOrUrl === 'string') {
+      if (imageFileOrUrl.startsWith('data:')) {
+        const match = imageFileOrUrl.match(/^data:([^;]+);base64,(.+)$/);
+        if (match && match[1] && match[2]) {
+          return { mimeType: match[1], imageBase64: match[2] };
+        }
       }
 
-      return result;
-    } catch {
-      throw AppError.aiIdentificationFailed();
+      // If it's a blob URL or remote URL:
+      try {
+        const resp = await fetch(imageFileOrUrl);
+        const blob = await resp.blob();
+        const mimeType = blob.type || 'image/jpeg';
+        const arrayBuf = await blob.arrayBuffer();
+        const bytes = new Uint8Array(arrayBuf);
+        let binary = '';
+        const len = bytes.byteLength;
+        for (let i = 0; i < len; i++) {
+          binary += String.fromCharCode(bytes[i] ?? 0);
+        }
+        return { imageBase64: btoa(binary), mimeType };
+      } catch {
+        throw AppError.fromAiEdgeFunction({
+          code: 'AI_INVALID_IMAGE',
+          message: 'Failed to read image source.',
+        });
+      }
+    } else {
+      // File object
+      const mimeType = imageFileOrUrl.type || 'image/jpeg';
+      const arrayBuf = await imageFileOrUrl.arrayBuffer();
+      const bytes = new Uint8Array(arrayBuf);
+      let binary = '';
+      const len = bytes.byteLength;
+      for (let i = 0; i < len; i++) {
+        binary += String.fromCharCode(bytes[i] ?? 0);
+      }
+      return { imageBase64: btoa(binary), mimeType };
     }
   }
 
-  async recommendValuePaths(_visionResult: VisionAnalysisResult): Promise<ValueAiResult> {
-    await delay(500);
+  async identifyItem(
+    imageFileOrUrl: File | string,
+    onProgress?: (progress: PipelineProgress) => void
+  ): Promise<VisionAnalysisResult> {
+    onProgress?.({
+      stage: 'detecting_object',
+      stageIndex: 1,
+      totalStages: 5,
+      label: 'Detecting object and geometry...',
+    });
+
+    // Ensure user is authenticated before initiating server inference
+    const { data: authData } = await supabase.auth.getUser();
+    if (!authData?.user) {
+      throw AppError.aiAuthRequired();
+    }
+
+    const { imageBase64, mimeType } = await this.prepareImagePayload(imageFileOrUrl);
+
+    onProgress?.({
+      stage: 'identifying_material',
+      stageIndex: 2,
+      totalStages: 5,
+      label: 'Identifying material and composition...',
+    });
+
+    onProgress?.({
+      stage: 'assessing_condition',
+      stageIndex: 3,
+      totalStages: 5,
+      label: 'Assessing structural condition...',
+    });
+
+    // Invoke authenticated Supabase Edge Function 'analyze-item'
+    const { data, error } = await supabase.functions.invoke('analyze-item', {
+      body: {
+        imageBase64,
+        mimeType,
+      },
+    });
+
+    if (error) {
+      let parsedError: unknown = error;
+      try {
+        const errorObj = error as unknown as FunctionErrorContext;
+        if (errorObj.context?.json) {
+          const body = await errorObj.context.json();
+          parsedError = body?.error || body;
+        }
+      } catch {
+        // Ignored
+      }
+      throw AppError.fromAiEdgeFunction(parsedError);
+    }
+
+    if (!data?.vision) {
+      throw AppError.aiIdentificationFailed();
+    }
+
+    onProgress?.({
+      stage: 'evaluating_value_paths',
+      stageIndex: 4,
+      totalStages: 5,
+      label: 'Evaluating circular pathways...',
+    });
+
+    // Cache the value AI output so recommendValuePaths does not trigger a redundant roundtrip
+    if (data.value) {
+      this.lastValueResult = data.value;
+      this.lastVisionResult = data.vision;
+    }
+
+    onProgress?.({
+      stage: 'preparing_recommendation',
+      stageIndex: 5,
+      totalStages: 5,
+      label: 'Preparing circular recommendations...',
+    });
+
+    return data.vision;
+  }
+
+  async recommendValuePaths(visionResult: VisionAnalysisResult): Promise<ValueAiResult> {
+    // If we have a cached value result from the identifyItem pass, return it directly
+    if (
+      this.lastValueResult &&
+      this.lastVisionResult?.detectedObject === visionResult.detectedObject
+    ) {
+      return this.lastValueResult;
+    }
+
+    // Heuristic fallback matching vision assessment
+    const isReusable = visionResult.condition === 'Usable';
+    const isRepairable = visionResult.condition === 'Repairable';
+    const recommendedPath: CircularValuePath = isReusable ? 'reuse' : isRepairable ? 'reuse' : 'recycle';
+    const isRecommended = (path: CircularValuePath): boolean => (path as string) === (recommendedPath as string);
 
     return {
-      recommendedPath: 'reuse',
-      summaryReasoning:
-        'Based on structural integrity and timber construction, keeping this item in active use retains more practical value than downcycling materials.',
+      recommendedPath,
+      summaryReasoning: `Based on ${visionResult.condition.toLowerCase()} condition and ${visionResult.material} composition, ${recommendedPath} retains the highest circular utility.`,
       paths: {
         reuse: {
           path: 'reuse',
           title: 'Reuse',
           tagline: 'Keep the item in active service',
-          isRecommended: true,
+          isRecommended: isRecommended('reuse'),
           reasoning: [
-            'Usable condition with sturdy frame and joints',
-            'Solid oak timber retains aesthetic and functional value',
-            'High local community demand for dining furniture',
+            `${visionResult.condition} structural condition allows continuous practical utility.`,
+            `High local community demand for ${visionResult.category.toLowerCase()}.`,
           ],
           potentialDemand: 'High',
           estimatedEffort: 'Low',
@@ -98,10 +177,10 @@ export class SupabaseAiService implements IAiService {
           path: 'donate',
           title: 'Donate',
           tagline: 'Pass to non-profits and families in need',
-          isRecommended: false,
+          isRecommended: isRecommended('donate'),
           reasoning: [
-            'Suitable for low-income home improvement shelters',
-            'Requires transport coordination',
+            'Suitable for low-income home assistance and community programs.',
+            'Drop-off or pickup coordination required.',
           ],
           potentialDemand: 'Moderate',
           estimatedEffort: 'Moderate',
@@ -111,10 +190,10 @@ export class SupabaseAiService implements IAiService {
           path: 'resell',
           title: 'Resell',
           tagline: 'Recover direct economic value',
-          isRecommended: false,
+          isRecommended: isRecommended('resell'),
           reasoning: [
-            'Estimated secondary market value: $25–$45',
-            'Listing and buyer negotiation required',
+            'Secondary marketplace listing and buyer negotiation required.',
+            'Moderate economic recovery potential.',
           ],
           potentialDemand: 'Moderate',
           estimatedEffort: 'High',
@@ -124,10 +203,10 @@ export class SupabaseAiService implements IAiService {
           path: 'recycle',
           title: 'Recycle',
           tagline: 'Recover raw materials and fibers',
-          isRecommended: false,
+          isRecommended: isRecommended('recycle'),
           reasoning: [
-            'Downcycles usable furniture into scrap chips',
-            'Secondary recovery option after direct reuse',
+            'Recovers base raw materials and diverts volume from landfill.',
+            'Appropriate when structural reuse is not viable.',
           ],
           potentialDemand: 'High',
           estimatedEffort: 'Low',

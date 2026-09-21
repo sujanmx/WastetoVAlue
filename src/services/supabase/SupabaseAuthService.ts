@@ -190,18 +190,22 @@ export class SupabaseAuthService implements IAuthService {
     const updatedProfile = await this.fetchProfile(authData.user.id);
     return mapProfileToUser(authData.user, updatedProfile);
   }
+async requestPasswordReset(email: string): Promise<void> {
+  const redirectTo =
+    typeof window !== 'undefined'
+      ? `${window.location.origin}/reset-password`
+      : undefined;
 
-  async requestPasswordReset(email: string): Promise<void> {
-    const redirectTo = typeof window !== 'undefined' ? `${window.location.origin}/login` : undefined;
-    const { error } = await supabase.auth.resetPasswordForEmail(email, {
-      redirectTo,
-    });
-    if (error) {
-      // Do not leak existence of user account
-      console.warn('[SupabaseAuthService] Password reset notice:', error.message);
-    }
+  const { error } = await supabase.auth.resetPasswordForEmail(email, {
+    redirectTo,
+  });
+
+  if (error) {
+    // Do not leak existence of user account
+    console.warn('[SupabaseAuthService] Password reset notice:', error.message);
   }
-
+}
+ 
   onAuthStateChange(callback: (session: AuthSession | null) => void): () => void {
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, sbSession) => {
       if (!sbSession || !sbSession.user || event === 'SIGNED_OUT') {

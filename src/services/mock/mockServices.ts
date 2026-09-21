@@ -219,26 +219,40 @@ export class MockAiService implements IAiService {
       onProgress({
         stage: 'detecting_object',
         stageIndex: 1,
-        totalStages: 3,
+        totalStages: 5,
         label: 'Detecting object and geometry...',
       });
-      await delay(450);
+      await delay(250);
       onProgress({
         stage: 'identifying_material',
         stageIndex: 2,
-        totalStages: 3,
+        totalStages: 5,
         label: 'Identifying material and composition...',
       });
-      await delay(450);
+      await delay(250);
       onProgress({
         stage: 'assessing_condition',
         stageIndex: 3,
-        totalStages: 3,
+        totalStages: 5,
         label: 'Assessing structural condition...',
       });
-      await delay(400);
+      await delay(250);
+      onProgress({
+        stage: 'evaluating_value_paths',
+        stageIndex: 4,
+        totalStages: 5,
+        label: 'Evaluating circular pathways...',
+      });
+      await delay(250);
+      onProgress({
+        stage: 'preparing_recommendation',
+        stageIndex: 5,
+        totalStages: 5,
+        label: 'Preparing circular recommendations...',
+      });
+      await delay(200);
     } else {
-      await delay(1200);
+      await delay(800);
     }
 
     return {

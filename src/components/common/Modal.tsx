@@ -21,19 +21,67 @@ export const Modal: React.FC<ModalProps> = ({
   maxWidth = 'md',
   className,
 }) => {
+  const modalRef = React.useRef<HTMLDivElement>(null);
+
   useEffect(() => {
+    if (!isOpen) return;
+
+    const previousActiveElement = document.activeElement as HTMLElement | null;
+
+    // Focus first focusable element or modal panel
+    const getFocusableElements = (): HTMLElement[] => {
+      if (!modalRef.current) return [];
+      return Array.from(
+        modalRef.current.querySelectorAll<HTMLElement>(
+          'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+        )
+      );
+    };
+
+    const focusables = getFocusableElements();
+    if (focusables.length > 0) {
+      focusables[0]?.focus();
+    } else {
+      modalRef.current?.focus();
+    }
+
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         onClose();
+        return;
+      }
+
+      if (e.key === 'Tab') {
+        const elements = getFocusableElements();
+        if (elements.length === 0) {
+          e.preventDefault();
+          return;
+        }
+
+        const firstElement = elements[0];
+        const lastElement = elements[elements.length - 1];
+
+        if (e.shiftKey) {
+          if (document.activeElement === firstElement) {
+            e.preventDefault();
+            lastElement?.focus();
+          }
+        } else {
+          if (document.activeElement === lastElement) {
+            e.preventDefault();
+            firstElement?.focus();
+          }
+        }
       }
     };
-    if (isOpen) {
-      document.body.style.overflow = 'hidden';
-      window.addEventListener('keydown', handleKeyDown);
-    }
+
+    document.body.style.overflow = 'hidden';
+    window.addEventListener('keydown', handleKeyDown);
+
     return () => {
       document.body.style.overflow = '';
       window.removeEventListener('keydown', handleKeyDown);
+      previousActiveElement?.focus();
     };
   }, [isOpen, onClose]);
 
@@ -61,8 +109,10 @@ export const Modal: React.FC<ModalProps> = ({
 
       {/* Floating Panel */}
       <div
+        ref={modalRef}
+        tabIndex={-1}
         className={cn(
-          'relative w-full bg-surface border border-border rounded-panel shadow-floating p-6 z-10 animate-in fade-in zoom-in-95 duration-150',
+          'relative w-full bg-surface border border-border rounded-panel shadow-floating p-6 z-10 animate-in fade-in zoom-in-95 duration-150 outline-none',
           maxWidthStyles,
           className
         )}

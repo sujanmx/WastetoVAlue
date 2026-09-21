@@ -166,12 +166,13 @@ CREATE INDEX IF NOT EXISTS idx_ai_assessments_user_id ON public.ai_assessments(u
 CREATE OR REPLACE FUNCTION public.handle_new_user()
 RETURNS TRIGGER AS $$
 BEGIN
-    INSERT INTO public.profiles (id, email, name, role)
+    INSERT INTO public.profiles (id, email, name, role, city)
     VALUES (
         NEW.id,
         NEW.email,
         COALESCE(NEW.raw_user_meta_data->>'name', ''),
-        COALESCE(NEW.raw_user_meta_data->>'role', 'household')
+        COALESCE(NEW.raw_user_meta_data->>'role', 'household'),
+        NEW.raw_user_meta_data->>'city'
     )
     ON CONFLICT (id) DO NOTHING;
 
@@ -208,6 +209,11 @@ ALTER TABLE public.impact_records ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "Users can read own profile"
     ON public.profiles FOR SELECT
     USING (auth.uid() = id);
+
+-- Users can insert their own profile
+CREATE POLICY "Users can insert own profile"
+    ON public.profiles FOR INSERT
+    WITH CHECK (auth.uid() = id);
 
 -- Users can update their own profile
 CREATE POLICY "Users can update own profile"
@@ -288,6 +294,11 @@ CREATE POLICY "Users can update own handover records"
 CREATE POLICY "Users can read own impact records"
     ON public.impact_records FOR SELECT
     USING (auth.uid() = user_id);
+
+-- Users can insert their own impact telemetry
+CREATE POLICY "Users can insert own impact records"
+    ON public.impact_records FOR INSERT
+    WITH CHECK (auth.uid() = user_id);
 
 -- Users can update their own impact telemetry
 CREATE POLICY "Users can update own impact records"

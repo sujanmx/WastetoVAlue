@@ -17,7 +17,7 @@ export const ScanAnalyzePage: React.FC = () => {
   const [currentProgress, setCurrentProgress] = useState<PipelineProgress>({
     stage: 'detecting_object',
     stageIndex: 1,
-    totalStages: 3,
+    totalStages: 5,
     label: 'Detecting object and geometry...',
   });
   const [error, setError] = useState<string | null>(null);
@@ -66,7 +66,7 @@ export const ScanAnalyzePage: React.FC = () => {
       <div className="text-center max-w-md mx-auto py-12">
         <h1 className="text-2xl font-bold text-primary-text mb-2">Understanding your item</h1>
         <p className="text-xs text-secondary-text mb-8">
-          Analyzing physical characteristics, timber/metal composition, and circular opportunities.
+          Analyzing physical characteristics, composition, and circular opportunities.
         </p>
 
         {error ? (
@@ -77,11 +77,13 @@ export const ScanAnalyzePage: React.FC = () => {
           />
         ) : (
           <Card variant="raised" className="p-6 text-left">
-            <div className="space-y-4">
+            <div className="space-y-3">
               {[
-                { index: 1, name: 'Detecting object geometry' },
-                { index: 2, name: 'Identifying material composition' },
-                { index: 3, name: 'Assessing structural condition' },
+                { index: 1, name: '01 Detecting object' },
+                { index: 2, name: '02 Identifying material' },
+                { index: 3, name: '03 Assessing condition' },
+                { index: 4, name: '04 Evaluating circular pathways' },
+                { index: 5, name: '05 Preparing recommendation' },
               ].map((step) => {
                 const isCompleted = currentProgress.stageIndex > step.index;
                 const isCurrent = currentProgress.stageIndex === step.index;
