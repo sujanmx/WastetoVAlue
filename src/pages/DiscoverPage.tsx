@@ -12,8 +12,13 @@ import { formatDistance } from '../lib/formatters';
 export const DiscoverPage: React.FC = () => {
   const [query, setQuery] = useState('');
 
-  const { data: receivers, isLoading, error } = useAsync(
+  const fetchReceivers = React.useCallback(
     () => services.receivers.getReceivers({ query }),
+    [query]
+  );
+
+  const { data: receivers, isLoading, error } = useAsync(
+    fetchReceivers,
     { immediate: true }
   );
 
@@ -65,3 +70,5 @@ export const DiscoverPage: React.FC = () => {
     </WorkspaceContainer>
   );
 };
+
+export default DiscoverPage;
