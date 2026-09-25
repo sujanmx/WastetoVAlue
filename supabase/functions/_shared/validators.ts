@@ -67,7 +67,7 @@ export function validateImageInput(
 
   // Verify actual image header magic bytes from base64 prefix
   const prefix = cleanBase64.slice(0, 16);
-  let verifiedMime = detectedMime;
+  let verifiedMime: string;
 
   if (prefix.startsWith('/9j/')) {
     verifiedMime = 'image/jpeg';
@@ -75,7 +75,7 @@ export function validateImageInput(
     verifiedMime = 'image/png';
   } else if (prefix.startsWith('UklGR')) {
     verifiedMime = 'image/webp';
-  } else if (!detectedMime) {
+  } else {
     throw new ValidationError(
       'AI_UNSUPPORTED_IMAGE',
       'Unrecognized image header. Supported formats: JPEG, PNG, WebP.',
@@ -83,9 +83,24 @@ export function validateImageInput(
     );
   }
 
+  // Cross-check: If client specified a MIME type, ensure it matches verified magic bytes
+  if (detectedMime) {
+    const isJpegConflict =
+      (detectedMime === 'image/jpeg' || detectedMime === 'image/jpg') && verifiedMime !== 'image/jpeg';
+    const isPngConflict = detectedMime === 'image/png' && verifiedMime !== 'image/png';
+    const isWebpConflict = detectedMime === 'image/webp' && verifiedMime !== 'image/webp';
+    if (isJpegConflict || isPngConflict || isWebpConflict) {
+      throw new ValidationError(
+        'AI_UNSUPPORTED_IMAGE',
+        `Image header signature (${verifiedMime}) does not match declared MIME type (${detectedMime}).`,
+        415
+      );
+    }
+  }
+
   return {
     cleanBase64,
-    validMimeType: verifiedMime || 'image/jpeg',
+    validMimeType: verifiedMime,
   };
 }
 
@@ -191,19 +206,25 @@ export function validateAndNormalizeGeminiOutput(rawJson: unknown): {
   const category = normalizeCategory(data.category);
   const condition = normalizeCondition(data.condition);
   const { confidence, confidenceScore } = normalizeConfidence(data.confidence, data.confidence_score);
-  const material = (typeof data.material === 'string' && data.material.trim()) || 'Unknown Material';
+  const material = ((typeof data.material === 'string' && data.material.trim()) || 'Unknown Material').slice(0, 100);
   const recommendedPath = normalizeValuePath(data.recommended_value_path);
 
   const tags = Array.isArray(data.tags)
-    ? data.tags.filter((t) => typeof t === 'string' && t.trim().length > 0).slice(0, 8)
+    ? data.tags
+        .filter((t) => typeof t === 'string' && t.trim().length > 0)
+        .map((t) => t.trim().slice(0, 30))
+        .slice(0, 8)
     : [category.toLowerCase(), material.toLowerCase()];
 
   const qualityIssues = Array.isArray(data.quality_issues)
-    ? data.quality_issues.filter((q) => typeof q === 'string' && q.trim().length > 0)
+    ? data.quality_issues
+        .filter((q) => typeof q === 'string' && q.trim().length > 0)
+        .map((q) => q.trim().slice(0, 100))
+        .slice(0, 5)
     : undefined;
 
   const vision: VisionAnalysisResult = {
-    detectedObject: data.detected_object.trim(),
+    detectedObject: data.detected_object.trim().slice(0, 120),
     category,
     material,
     condition,
@@ -242,11 +263,11 @@ export function validateAndNormalizeGeminiOutput(rawJson: unknown): {
     const opt = rawOpt as Record<string, unknown>;
     return {
       path,
-      title: (typeof opt.title === 'string' && opt.title) || title,
-      tagline: (typeof opt.tagline === 'string' && opt.tagline) || defaultTagline,
+      title: ((typeof opt.title === 'string' && opt.title) || title).slice(0, 80),
+      tagline: ((typeof opt.tagline === 'string' && opt.tagline) || defaultTagline).slice(0, 150),
       isRecommended: path === recommendedPath,
       reasoning: Array.isArray(opt.reasoning) && opt.reasoning.length > 0
-        ? (opt.reasoning.filter((r) => typeof r === 'string') as string[])
+        ? (opt.reasoning.filter((r) => typeof r === 'string' && r.trim().length > 0).map((r) => r.trim().slice(0, 200)).slice(0, 5) as string[])
         : defaultOption(path, title, defaultTagline).reasoning,
       potentialDemand: (['High', 'Moderate', 'Low'].includes(String(opt.potential_demand))
         ? String(opt.potential_demand)
@@ -254,15 +275,16 @@ export function validateAndNormalizeGeminiOutput(rawJson: unknown): {
       estimatedEffort: (['Low', 'Moderate', 'High'].includes(String(opt.estimated_effort))
         ? String(opt.estimated_effort)
         : 'Moderate') as 'Low' | 'Moderate' | 'High',
-      recoveryPotential: (typeof opt.recovery_potential === 'string' && opt.recovery_potential) || 'Material recovery',
+      recoveryPotential: ((typeof opt.recovery_potential === 'string' && opt.recovery_potential) || 'Material recovery').slice(0, 100),
     };
   };
 
   const value: ValueAiResult = {
     recommendedPath,
-    summaryReasoning:
+    summaryReasoning: (
       (typeof data.summary_reasoning === 'string' && data.summary_reasoning.trim()) ||
-      `Based on ${condition.toLowerCase()} condition and ${material} construction, ${recommendedPath} provides the highest circular value.`,
+      `Based on ${condition.toLowerCase()} condition and ${material} construction, ${recommendedPath} provides the highest circular value.`
+    ).slice(0, 500),
     paths: {
       reuse: mapPathOption('reuse', 'Reuse', 'Keep the item in active service', rawPaths?.reuse),
       donate: mapPathOption('donate', 'Donate', 'Pass to non-profits and shelters in need', rawPaths?.donate),

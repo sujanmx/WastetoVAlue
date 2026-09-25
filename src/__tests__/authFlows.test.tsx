@@ -94,6 +94,63 @@ describe('Authentication Flows & Security UX', () => {
         await screen.findByText(/Invalid email or password. Please verify your credentials./i)
       ).toBeInTheDocument();
     });
+
+    it('sanitizes open redirect attempts in location state and redirects to safe fallback', async () => {
+      vi.spyOn(services.auth, 'getCurrentSession').mockResolvedValue({
+        token: 'valid_token',
+        expiresAt: '',
+        user: {
+          id: 'user_123',
+          name: 'Test User',
+          email: 'test@example.com',
+          role: 'household',
+          preferences: { interests: [], notificationsEnabled: false, reducedMotion: false, searchRadiusKm: 10 },
+          createdAt: new Date().toISOString(),
+        },
+      });
+
+      render(
+        <MemoryRouter initialEntries={[{ pathname: '/login', state: { from: { pathname: '//evil.com' } } }]}>
+          <AuthProvider>
+            <Routes>
+              <Route path="/login" element={<LoginPage />} />
+              <Route path="/home" element={<div>Home Safe Landing</div>} />
+            </Routes>
+          </AuthProvider>
+        </MemoryRouter>
+      );
+
+      expect(await screen.findByText('Home Safe Landing')).toBeInTheDocument();
+    });
+
+    it('allows safe relative redirect paths in location state when authenticated', async () => {
+      vi.spyOn(services.auth, 'getCurrentSession').mockResolvedValue({
+        token: 'valid_token',
+        expiresAt: '',
+        user: {
+          id: 'user_123',
+          name: 'Test User',
+          email: 'test@example.com',
+          role: 'household',
+          preferences: { interests: [], notificationsEnabled: false, reducedMotion: false, searchRadiusKm: 10 },
+          createdAt: new Date().toISOString(),
+        },
+      });
+
+      render(
+        <MemoryRouter initialEntries={[{ pathname: '/login', state: { from: { pathname: '/scan' } } }]}>
+          <AuthProvider>
+            <Routes>
+              <Route path="/login" element={<LoginPage />} />
+              <Route path="/scan" element={<div>Scan Target Route</div>} />
+              <Route path="/home" element={<div>Home Safe Landing</div>} />
+            </Routes>
+          </AuthProvider>
+        </MemoryRouter>
+      );
+
+      expect(await screen.findByText('Scan Target Route')).toBeInTheDocument();
+    });
   });
 
   describe('SignUpPage Behavior', () => {

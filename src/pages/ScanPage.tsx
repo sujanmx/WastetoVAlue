@@ -11,10 +11,16 @@ export const ScanPage: React.FC = () => {
   const navigate = useNavigate();
   const { setImage } = useScanFlow();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [uploadError, setUploadError] = React.useState<string | null>(null);
 
   const handleFile = (file: File) => {
+    setUploadError(null);
+    if (!UPLOAD_LIMITS.acceptedMimeTypes.includes(file.type as (typeof UPLOAD_LIMITS.acceptedMimeTypes)[number])) {
+      setUploadError('Unsupported format. Please select a JPEG, PNG, or WebP photo.');
+      return;
+    }
     if (file.size > UPLOAD_LIMITS.maxFileSizeBytes) {
-      alert(`File size exceeds ${UPLOAD_LIMITS.maxFileSizeMb}MB limit.`);
+      setUploadError(`File size exceeds ${UPLOAD_LIMITS.maxFileSizeMb}MB limit.`);
       return;
     }
     const previewUrl = URL.createObjectURL(file);
@@ -96,6 +102,12 @@ export const ScanPage: React.FC = () => {
               Use Demo Sample
             </Button>
           </div>
+
+          {uploadError && (
+            <p className="text-xs text-brand-error mt-4 font-medium" role="alert">
+              {uploadError}
+            </p>
+          )}
         </Card>
 
         {/* How It Works Sidebar Panel (Desktop 1024px+) */}

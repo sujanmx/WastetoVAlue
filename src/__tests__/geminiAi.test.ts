@@ -93,6 +93,18 @@ describe('Gemini AI Multimodal System Test Suite', () => {
         expect((e as ValidationError).code).toBe('AI_UNSUPPORTED_IMAGE');
       }
     });
+
+    it('throws AI_UNSUPPORTED_IMAGE if declared MIME type conflicts with verified magic bytes', () => {
+      // validJpegBase64 starts with /9j/ (JPEG magic bytes), but declared as image/png
+      expect(() => validateImageInput(validJpegBase64, 'image/png')).toThrow(ValidationError);
+      try {
+        validateImageInput(validJpegBase64, 'image/png');
+      } catch (e) {
+        expect((e as ValidationError).code).toBe('AI_UNSUPPORTED_IMAGE');
+        expect((e as ValidationError).status).toBe(415);
+        expect((e as ValidationError).message).toContain('does not match declared MIME type');
+      }
+    });
   });
 
   describe('Domain Normalization and Data Honesty', () => {
@@ -216,6 +228,74 @@ describe('Gemini AI Multimodal System Test Suite', () => {
       expect(value.paths.donate.isRecommended).toBe(false);
       expect(value.paths.resell.isRecommended).toBe(false);
       expect(value.paths.recycle.isRecommended).toBe(false);
+    });
+
+    it('bounds excessive string lengths and array sizes from Gemini output to prevent UI bloating', () => {
+      const oversizedOutput: GeminiStructuredOutput = {
+        detected_object: 'A'.repeat(200),
+        category: 'Electronics',
+        material: 'M'.repeat(200),
+        condition: 'Usable',
+        confidence: 'High',
+        confidence_score: 0.9,
+        tags: Array(20).fill('excessive-tag-name-that-is-way-too-long-for-ui'),
+        quality_issues: Array(15).fill('Q'.repeat(200)),
+        recommended_value_path: 'reuse',
+        summary_reasoning: 'R'.repeat(1000),
+        paths_evaluation: {
+          reuse: {
+            title: 'T'.repeat(200),
+            tagline: 'L'.repeat(300),
+            is_recommended: true,
+            reasoning: Array(10).fill('E'.repeat(300)),
+            potential_demand: 'High',
+            estimated_effort: 'Low',
+            recovery_potential: 'P'.repeat(200),
+          },
+          donate: {
+            title: 'Donate Title',
+            tagline: 'Donate Tagline',
+            is_recommended: false,
+            reasoning: ['Reasonable donation'],
+            potential_demand: 'Moderate',
+            estimated_effort: 'Moderate',
+            recovery_potential: 'Good retention',
+          },
+          resell: {
+            title: 'Resell Title',
+            tagline: 'Resell Tagline',
+            is_recommended: false,
+            reasoning: ['Reasonable resale'],
+            potential_demand: 'Moderate',
+            estimated_effort: 'High',
+            recovery_potential: 'Monetary value',
+          },
+          recycle: {
+            title: 'Recycle Title',
+            tagline: 'Recycle Tagline',
+            is_recommended: false,
+            reasoning: ['Recycle path'],
+            potential_demand: 'Low',
+            estimated_effort: 'High',
+            recovery_potential: 'Scrap recovery',
+          },
+        },
+      };
+
+      const { vision, value } = toDomainResults(oversizedOutput);
+
+      expect(vision.detectedObject.length).toBeLessThanOrEqual(120);
+      expect(vision.material.length).toBeLessThanOrEqual(100);
+      expect(vision.tags.length).toBeLessThanOrEqual(8);
+      vision.tags.forEach((t) => expect(t.length).toBeLessThanOrEqual(30));
+      expect(vision.qualityIssues?.length).toBeLessThanOrEqual(5);
+      vision.qualityIssues?.forEach((q) => expect(q.length).toBeLessThanOrEqual(100));
+      expect(value.summaryReasoning.length).toBeLessThanOrEqual(500);
+      expect(value.paths.reuse.title.length).toBeLessThanOrEqual(80);
+      expect(value.paths.reuse.tagline.length).toBeLessThanOrEqual(150);
+      expect(value.paths.reuse.reasoning.length).toBeLessThanOrEqual(5);
+      value.paths.reuse.reasoning.forEach((r) => expect(r.length).toBeLessThanOrEqual(200));
+      expect(value.paths.reuse.recoveryPotential.length).toBeLessThanOrEqual(100);
     });
   });
 

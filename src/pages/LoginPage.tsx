@@ -15,7 +15,14 @@ export const LoginPage: React.FC = () => {
   const { login, loginWithGoogle, isAuthenticated, isPasswordRecovery } = useAuth();
 
   // If already authenticated, redirect to destination or home (unless currently in password recovery)
-  const from = (location.state as { from?: { pathname: string } })?.from?.pathname || ROUTES.HOME;
+  // Security: prevent open redirect by verifying the path is a safe internal relative path
+  const rawFrom = (location.state as { from?: { pathname: string } })?.from?.pathname;
+  const isSafeRelativePath =
+    typeof rawFrom === 'string' &&
+    rawFrom.startsWith('/') &&
+    !rawFrom.startsWith('//') &&
+    !rawFrom.startsWith('/\\');
+  const from = isSafeRelativePath ? rawFrom : ROUTES.HOME;
 
   React.useEffect(() => {
     if (isAuthenticated && !isPasswordRecovery) {

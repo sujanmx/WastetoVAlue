@@ -164,14 +164,22 @@ CREATE INDEX IF NOT EXISTS idx_ai_assessments_user_id ON public.ai_assessments(u
 -- 8. AUTOMATIC PROFILE AND IMPACT INITIALIZATION TRIGGER
 -- ==============================================================================
 CREATE OR REPLACE FUNCTION public.handle_new_user()
-RETURNS TRIGGER AS $$
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
 BEGIN
     INSERT INTO public.profiles (id, email, name, role, city)
     VALUES (
         NEW.id,
         NEW.email,
         COALESCE(NEW.raw_user_meta_data->>'name', ''),
-        COALESCE(NEW.raw_user_meta_data->>'role', 'household'),
+        CASE
+            WHEN NEW.raw_user_meta_data->>'role' IN ('household', 'student', 'business', 'recycler', 'ngo')
+            THEN NEW.raw_user_meta_data->>'role'
+            ELSE 'household'
+        END,
         NEW.raw_user_meta_data->>'city'
     )
     ON CONFLICT (id) DO NOTHING;
@@ -182,7 +190,7 @@ BEGIN
 
     RETURN NEW;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+$$;
 
 -- Trigger execution on auth.users insert
 DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
@@ -276,16 +284,30 @@ CREATE POLICY "Users can read own handover records"
     ON public.handover_records FOR SELECT
     USING (auth.uid() = user_id);
 
--- Users can create handover records for their items
+-- Users can create handover records for their items (verifies item ownership to prevent IDOR)
 CREATE POLICY "Users can insert own handover records"
     ON public.handover_records FOR INSERT
-    WITH CHECK (auth.uid() = user_id);
+    WITH CHECK (
+        auth.uid() = user_id
+        AND EXISTS (
+            SELECT 1 FROM public.items
+            WHERE items.id = handover_records.item_id
+              AND items.user_id = auth.uid()
+        )
+    );
 
 -- Users can update their own handover records
 CREATE POLICY "Users can update own handover records"
     ON public.handover_records FOR UPDATE
     USING (auth.uid() = user_id)
-    WITH CHECK (auth.uid() = user_id);
+    WITH CHECK (
+        auth.uid() = user_id
+        AND EXISTS (
+            SELECT 1 FROM public.items
+            WHERE items.id = handover_records.item_id
+              AND items.user_id = auth.uid()
+        )
+    );
 
 -- ------------------------------------------------------------------------------
 -- IMPACT RECORDS POLICIES
@@ -295,16 +317,8 @@ CREATE POLICY "Users can read own impact records"
     ON public.impact_records FOR SELECT
     USING (auth.uid() = user_id);
 
--- Users can insert their own impact telemetry
-CREATE POLICY "Users can insert own impact records"
-    ON public.impact_records FOR INSERT
-    WITH CHECK (auth.uid() = user_id);
-
--- Users can update their own impact telemetry
-CREATE POLICY "Users can update own impact records"
-    ON public.impact_records FOR UPDATE
-    USING (auth.uid() = user_id)
-    WITH CHECK (auth.uid() = user_id);
+-- Direct client modification of impact telemetry is disallowed (data honesty enforcement).
+-- Telemetry is maintained exclusively by database triggers and verified backend service operations.
 
 -- ==============================================================================
 -- 10. SEED INITIAL RECEIVERS (Demonstration data for discovery)
