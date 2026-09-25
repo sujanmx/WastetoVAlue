@@ -141,7 +141,15 @@ export interface Database {
           created_at?: string;
           updated_at?: string;
         };
-        Relationships: [];
+        Relationships: [
+          {
+            foreignKeyName: 'items_receiver_id_fkey';
+            columns: ['receiver_id'];
+            isOneToOne: false;
+            referencedRelation: 'receivers';
+            referencedColumns: ['id'];
+          },
+        ];
       };
       ai_assessments: {
         Row: {

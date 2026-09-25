@@ -4,10 +4,10 @@ import { WorkspaceContainer } from '../components/layout/WorkspaceContainer';
 import { Card } from '../components/common/Card';
 import { Button } from '../components/common/Button';
 import { Input } from '../components/common/Input';
-import { services } from '../services';
+import { services, AppError } from '../services';
 import { ROUTES, ITEM_CATEGORIES, ITEM_CONDITIONS } from '../config/constants';
 import { ItemCategory, ItemCondition, CircularValuePath } from '../types/item';
-import { ArrowLeft, Plus } from 'lucide-react';
+import { ArrowLeft, Plus, CheckCircle2, AlertCircle } from 'lucide-react';
 
 export const CreateListingPage: React.FC = () => {
   const navigate = useNavigate();
@@ -18,10 +18,14 @@ export const CreateListingPage: React.FC = () => {
   const [description, setDescription] = useState('');
   const [selectedValuePath, setSelectedValuePath] = useState<CircularValuePath>('reuse');
   const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
+    setError(null);
+    setSuccessMessage(null);
     try {
       await services.items.createItem({
         title,
@@ -33,7 +37,18 @@ export const CreateListingPage: React.FC = () => {
         imageUrl:
           'https://images.unsplash.com/photo-1503602642458-232111445657?auto=format&fit=crop&w=600&q=80',
       });
-      navigate(ROUTES.ITEMS);
+      setSuccessMessage('Item created successfully.');
+      // Brief delay so the user sees the success feedback before navigating
+      setTimeout(() => navigate(ROUTES.ITEMS), 600);
+    } catch (err: unknown) {
+      const appError =
+        err instanceof AppError
+          ? err
+          : new AppError({
+              message: err instanceof Error ? err.message : 'An error occurred',
+              code: 'UNKNOWN_ERROR',
+            });
+      setError(appError.userMessage);
     } finally {
       setIsLoading(false);
     }
@@ -57,6 +72,22 @@ export const CreateListingPage: React.FC = () => {
         <p className="text-xs sm:text-sm text-secondary-text mb-6">
           Manually specify details for an item if you are not utilizing the automated AI camera scan.
         </p>
+
+        {/* Error feedback */}
+        {error && (
+          <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-input flex items-start gap-2 text-sm text-red-700">
+            <AlertCircle className="w-4 h-4 mt-0.5 flex-shrink-0" />
+            <span>{error}</span>
+          </div>
+        )}
+
+        {/* Success feedback */}
+        {successMessage && (
+          <div className="mb-4 p-3 bg-green-50 border border-green-200 rounded-input flex items-start gap-2 text-sm text-green-700">
+            <CheckCircle2 className="w-4 h-4 mt-0.5 flex-shrink-0" />
+            <span>{successMessage}</span>
+          </div>
+        )}
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <Input

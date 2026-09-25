@@ -32,7 +32,7 @@ export class SupabaseItemService implements IItemService {
   async getItems(params?: { status?: string; category?: string }): Promise<WasteItem[]> {
     let query = supabase
       .from('items')
-      .select('*')
+      .select('*, receivers(name)')
       .order('created_at', { ascending: false });
 
     if (params?.status && params.status !== 'all') {
@@ -47,7 +47,13 @@ export class SupabaseItemService implements IItemService {
       throw AppError.fromSupabase(error, 'Failed to retrieve your items.');
     }
 
-    return (data || []).map(mapRowToItem);
+    return (data || []).map((row) => {
+      const receiverData = row.receivers as { name: string } | null;
+      return {
+        ...mapRowToItem(row as ItemRow),
+        receiverName: receiverData?.name || undefined,
+      };
+    });
   }
 
   async getItemById(id: string): Promise<WasteItem> {
@@ -137,7 +143,7 @@ export class SupabaseItemService implements IItemService {
   async getRecentItems(limit = 3): Promise<WasteItem[]> {
     const { data, error } = await supabase
       .from('items')
-      .select('*')
+      .select('*, receivers(name)')
       .order('created_at', { ascending: false })
       .limit(limit);
 
@@ -145,6 +151,12 @@ export class SupabaseItemService implements IItemService {
       throw AppError.fromSupabase(error, 'Failed to load recent activity.');
     }
 
-    return (data || []).map(mapRowToItem);
+    return (data || []).map((row) => {
+      const receiverData = row.receivers as { name: string } | null;
+      return {
+        ...mapRowToItem(row as ItemRow),
+        receiverName: receiverData?.name || undefined,
+      };
+    });
   }
 }
